@@ -1,81 +1,77 @@
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 import numpy as np
-import pickle
-import time
 import tensorflow as tf
-import tensorflow.contrib.eager as tfe
 
-class P_network(tf.keras.Model):
-    def __init__(self, grid_size=8):
-        super(P_network, self).__init__()
+
+class Pnetwork(tf.keras.Model):
+    def __init__(self, grid_size=8, device="/cpu:0"):
+        super(Pnetwork, self).__init__()
         self.grid_size = grid_size
-        with tf.device("/gpu:0"):
+        self.device = device
+        with tf.device(device):
             width = 100
-            self.linear0 = tf.keras.layers.Dense(width,kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            self.linear0 = tf.keras.layers.Dense(width,kernel_regularizer=tf.keras.regularizers.l2(1e-7),
                                                  use_bias=False)
             self.num_layers = 100
-            for i in range(1,self.num_layers):
+            for i in range(1, self.num_layers):
                 setattr(self, "linear%i" % i, tf.keras.layers.Dense(width, use_bias=False,
-                                                                    kernel_regularizer=tf.keras.regularizers.l2(1e-3),
+                                                                    kernel_regularizer=tf.keras.regularizers.l2(1e-7),
                                                                     kernel_initializer=tf.initializers.truncated_normal(
                                                                         stddev=i ** (-1 / 2) * np.sqrt(2. / width))))
-                setattr(self, "bias_1%i" % i, tfe.Variable([0.], dtype=tf.float64))
+                setattr(self, "bias_1%i" % i, tf.Variable([0.], dtype=tf.float64))
                 setattr(self, "linear%i" % (i + 1), tf.keras.layers.Dense(width, use_bias=False,
                                                                           kernel_regularizer=tf.keras.regularizers.l2(
-                                                                              1e-4),
+                                                                              1e-7),
                                                                           kernel_initializer=tf.zeros_initializer()))
-                setattr(self, "bias_2%i" % i, tfe.Variable([0.], dtype=tf.float64))
-                setattr(self, "bias_3%i" % i, tfe.Variable([0.], dtype=tf.float64))
-                setattr(self, "bias_4%i" % i, tfe.Variable([0.], dtype=tf.float64))
-                setattr(self, "multiplier_%i" % i, tfe.Variable([1.], dtype=tf.float64))
+                setattr(self, "bias_2%i" % i, tf.Variable([0.], dtype=tf.float64))
+                setattr(self, "bias_3%i" % i, tf.Variable([0.], dtype=tf.float64))
+                setattr(self, "bias_4%i" % i, tf.Variable([0.], dtype=tf.float64))
+                setattr(self, "multiplier_%i" % i, tf.Variable([1.], dtype=tf.float64))
 
-            self.output_layer = tf.keras.layers.Dense(4,use_bias=True,kernel_regularizer=tf.keras.regularizers.l2(1e-9))
-            self.new_output = tfe.Variable(0.5*tf.random_normal(shape=[2*2*2*8],dtype=tf.float64), dtype=tf.float64)
-    def call(self, inputs,black_box=False,index=None,pos=-1.,phase='Training'):
-        with tf.device("gpu:0"):
+            self.output_layer = tf.keras.layers.Dense(4, use_bias=True, kernel_regularizer=tf.keras.regularizers.l2(1e-5))
+            self.new_output = tf.Variable(0.5*tf.random_normal(shape=[2*2*2*8], dtype=tf.float64), dtype=tf.float64)
+
+    def call(self, inputs, black_box=False, index=None, pos=-1., phase='Training'):
+
+        with tf.device(self.device):
             batch_size = inputs.shape[0]
-            right_contributions_input = tf.gather(inputs,
-                                                  [i for i in range(1,self.grid_size,2)], axis=1)
-            right_contributions_input = tf.gather(right_contributions_input,
-                                                  [i for i in range(0,self.grid_size,2)], axis=2)
-            idx = [(i-1)%self.grid_size for i in range(0,self.grid_size,2)]
-            left_contributions_input = tf.gather(inputs,idx, axis=1)
-            left_contributions_input = tf.gather(left_contributions_input,
-                                                 [i for i in range(0,self.grid_size,2)], axis=2)
-            left_contributions_input = tf.reshape(left_contributions_input,
-                                                  (-1,self.grid_size//2,self.grid_size//2,3,3))
+            right_contributions_input = tf.gather(params=inputs,
+                                                  indices=[i for i in range(1, self.grid_size, 2)], axis=1)
+            right_contributions_input = tf.gather(params=right_contributions_input,
+                                                  indices=[i for i in range(0, self.grid_size, 2)], axis=2)
+            idx = [(i-1) % self.grid_size for i in range(0, self.grid_size, 2)]
+            left_contributions_input = tf.gather(params=inputs, indices=idx, axis=1)
+            left_contributions_input = tf.gather(params=left_contributions_input,
+                                                 indices=[i for i in range(0, self.grid_size, 2)], axis=2)
+            left_contributions_input = tf.reshape(tensor=left_contributions_input,
+                                                  shape=(-1, self.grid_size//2, self.grid_size//2, 3, 3))
 
-            up_contributions_input = tf.gather(inputs, [i for i in range(0,self.grid_size,2)], axis=1)
-            up_contributions_input = tf.gather(up_contributions_input,
-                                               [i for i in range(1,self.grid_size,2)], axis=2)
-            up_contributions_input = tf.reshape(up_contributions_input,
-                                                (-1, self.grid_size//2,self.grid_size//2, 3,3))
+            up_contributions_input = tf.gather(params=inputs, indices=[i for i in range(0, self.grid_size, 2)], axis=1)
+            up_contributions_input = tf.gather(params=up_contributions_input,
+                                               indices=[i for i in range(1, self.grid_size, 2)], axis=2)
+            up_contributions_input = tf.reshape(tensor=up_contributions_input,
+                                                shape=(-1, self.grid_size//2, self.grid_size//2, 3, 3))
 
-            down_contributions_input = tf.gather(inputs,
-                                                 [i for i in range(0,self.grid_size,2)], axis=1)
-            down_contributions_input = tf.gather(down_contributions_input, idx, axis=2)
-            down_contributions_input = tf.reshape(down_contributions_input,
-                                                  (-1,self.grid_size//2,self.grid_size//2,3,3))
+            down_contributions_input = tf.gather(params=inputs,
+                                                 indices=[i for i in range(0,self.grid_size,2)], axis=1)
+            down_contributions_input = tf.gather(params=down_contributions_input, indices=idx, axis=2)
+            down_contributions_input = tf.reshape(tensor=down_contributions_input,
+                                                  shape=(-1,self.grid_size//2,self.grid_size//2,3,3))
             #
-            center_contributions_input = tf.gather(inputs,
-                                                 [i for i in range(0, self.grid_size, 2)], axis=1)
-            center_contributions_input = tf.gather(center_contributions_input, [i for i in range(0, self.grid_size, 2)], axis=2)
-            center_contributions_input = tf.reshape(center_contributions_input,
-                                                  (-1, self.grid_size // 2, self.grid_size // 2, 3, 3))
+            center_contributions_input = tf.gather(params=inputs,
+                                                   indices=[i for i in range(0, self.grid_size, 2)], axis=1)
+            center_contributions_input = tf.gather(params=center_contributions_input, indices=[i for i in range(0, self.grid_size, 2)], axis=2)
+            center_contributions_input = tf.reshape(tensor=center_contributions_input,
+                                                    shape=(-1, self.grid_size // 2, self.grid_size // 2, 3, 3))
 
             inputs_combined = tf.concat([right_contributions_input, left_contributions_input,
                                          up_contributions_input, down_contributions_input,
                                          center_contributions_input], 0)
 
-            inputs_combined_temp = tf.concat([tf.reduce_sum(inputs_combined,axis=3),
-                                              tf.reduce_sum(inputs_combined,axis=4)],axis=-1)
-
-            #
-            flattended = tf.reshape(inputs_combined,(-1,9))
+            flattended = tf.reshape(inputs_combined, (-1, 9))
 
             temp = (self.grid_size//2)**2
 
+            # bug then augmented with doubled grid size
             flattended = tf.concat([flattended[:batch_size*temp],
                                     flattended[temp*batch_size:temp*2*batch_size],
                                     flattended[temp*2*batch_size:temp*3*batch_size],
